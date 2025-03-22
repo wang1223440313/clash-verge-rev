@@ -1,6 +1,7 @@
 import dayjs from "dayjs";
 import { invoke } from "@tauri-apps/api/core";
 import { Notice } from "@/components/base";
+import { getClashConfig } from "@/services/api";
 
 export async function copyClashEnv() {
   return invoke<void>("copy_clash_env");
@@ -93,6 +94,27 @@ export async function patchClashConfig(payload: Partial<IConfigData>) {
 
 export async function patchClashMode(payload: String) {
   return invoke<void>("patch_clash_mode", { payload });
+}
+
+// 直接获取当前Clash模式
+export async function getCurrentClashMode() {
+  try {
+    // 优先从clash info获取最新的模式信息
+    const clashInfo = await getClashInfo();
+    if (clashInfo) {
+      const configData = await getClashConfig();
+      if (configData?.mode) {
+        return configData.mode.toLowerCase();
+      }
+    }
+    
+    // 如果clash api获取失败，尝试从runtime配置获取
+    const config = await invoke<IConfigData>("get_runtime_config");
+    return config?.mode?.toLowerCase() || "rule";
+  } catch (error) {
+    console.error("获取模式失败:", error);
+    return "rule"; // 出错时返回默认值
+  }
 }
 
 export async function getVergeConfig() {

@@ -1,9 +1,8 @@
 import { useTranslation } from "react-i18next";
 import { Box, Typography, Paper, Stack, Fade } from "@mui/material";
 import { useLockFn } from "ahooks";
-import useSWR from "swr";
-import { closeAllConnections, getClashConfig } from "@/services/api";
-import { patchClashMode } from "@/services/cmds";
+import { closeAllConnections } from "@/services/api";
+import { patchClashMode, getCurrentClashMode } from "@/services/cmds";
 import { useVerge } from "@/hooks/use-verge";
 import {
   LanguageRounded,
@@ -11,30 +10,63 @@ import {
   DirectionsRounded,
 } from "@mui/icons-material";
 import { useState, useEffect, useMemo } from "react";
+import { listen } from "@tauri-apps/api/event";
 
 export const ClashModeCard = () => {
   const { t } = useTranslation();
   const { verge } = useVerge();
 
-  // 获取当前Clash配置
-  const { data: clashConfig, mutate: mutateClash } = useSWR(
-    "getClashConfig",
-    getClashConfig,
-    { revalidateOnFocus: false }
-  );
-
   // 支持的模式列表
   const modeList = useMemo(() => ["rule", "global", "direct"] as const, []);
 
-  // 本地状态记录当前模式
-  const [localMode, setLocalMode] = useState<string>("rule");
+  // 使用undefined作为初始状态，表示正在加载中
+  const [localMode, setLocalMode] = useState<string | undefined>(undefined);
 
-  // 当从API获取到当前模式时更新本地状态
-  useEffect(() => {
-    if (clashConfig?.mode) {
-      setLocalMode(clashConfig.mode.toLowerCase());
+  // 获取当前模式的函数
+  const fetchMode = async () => {
+    try {
+      const mode = await getCurrentClashMode();
+      setLocalMode(mode);
+    } catch (error) {
+      console.error("获取代理模式失败:", error);
+      setLocalMode("rule"); // 失败时默认为rule模式
     }
-  }, [clashConfig]);
+  };
+
+  // 直接从后端获取当前模式，不使用SWR
+  useEffect(() => {
+    let mounted = true;
+    
+    const loadMode = async () => {
+      try {
+        const mode = await getCurrentClashMode();
+        if (mounted) {
+          setLocalMode(mode);
+        }
+      } catch (error) {
+        console.error("获取代理模式失败:", error);
+        if (mounted) {
+          setLocalMode("rule"); // 失败时默认为rule模式
+        }
+      }
+    };
+    
+    loadMode();
+    
+    // 监听Clash配置刷新事件，当配置刷新时重新获取模式
+    const unlisten = listen("verge://refresh-clash-config", () => {
+      if (mounted) {
+        console.log("Received refresh-clash-config event, updating mode...");
+        loadMode();
+      }
+    });
+    
+    // 清理函数
+    return () => {
+      mounted = false;
+      unlisten.then(unlistenFn => unlistenFn());
+    };
+  }, []);
 
   // 模式图标映射
   const modeIcons = useMemo(() => ({
@@ -55,12 +87,10 @@ export const ClashModeCard = () => {
 
     try {
       await patchClashMode(mode);
-      mutateClash();
     } catch (error) {
       console.error("Failed to change mode:", error);
-      if (clashConfig?.mode) {
-        setLocalMode(clashConfig.mode.toLowerCase());
-      }
+      // 切换失败时，重新获取当前模式
+      fetchMode();
     }
   });
 
